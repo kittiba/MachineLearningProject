@@ -1,0 +1,203 @@
+---
+title: "Weight Lifting Exercise Quality Prediction "
+output: html_document
+---
+##Executive Summary:
+
+During exercising, one thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify **how well** they do it. In this project, my goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants and come up with the exercise quality predictions. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways to qualify how well they did the exercise.
+
+I have evaluated two different models 'Stochastic Gradient Boosting' (GBM) and 'Random Forest' with crossvalidation. I have broken down the total training data into a test set (40% of original training set) and trained both models on the training set (60%). Clearly both had very good predictions in the higher 90% range. However **Random Forrest** was clearly the winner with **98% and higher accuracy**.
+
+##Exploratory Analysis/Cleaning up data:
+
+I opened the data file in excel to quickly see how the data is laid out. Applying filters on the columns, I did notice that there is a row after every 24 to 28 lines with a value in 'New_window' column of 'yes'. Since this seem to be not a direct measurement, I wanted to remove these rows. 
+
+Next, the remaining rows did not seem to have data in a lot of calculated columns (for example min, max columns). So I safely removed them from my predictors list. Also I could find the first few columns seem to only represent the time frame and or identify the subject. These columns are of no interest to me as this is a classification problem so I removed them.
+
+Using subset, I made the data set tidy with only the columns of my interest.
+
+```{r echo=TRUE, cache=TRUE, warning=FALSE,message=FALSE}
+#libary loading
+        library(lattice)
+        library(ggplot2)
+        library(randomForest)
+        library(caret)
+        library(gbm)
+        library(plyr)
+
+        #Checking to see if I previously downloaded the Training file
+        if(!file.exists("data/pml-training.csv")){
+                
+                 fileUrl<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+                 download.file(fileUrl, destfile="data/pml-training.csv")
+        }
+        #Checking to see if I previously downloaded the Test file
+        if(!file.exists("data/pml-testing.csv")){
+                
+                fileUrl<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+                download.file(fileUrl, destfile="data/pml-testing.csv")
+        }
+
+        #Reading the file
+        totalData<-read.csv("data/pml-training.csv")
+
+        #removing all columns except the following sensory columns and one outcome
+        #For each of the 4 sensors - belt, arm, dumbbell, forearm 
+        #   - roll, pitch, yaw - 3 measurements
+        #   - gyros, accel, magnet (x, y, z for each) - 3x3 = 9 measurements
+        # Total of 4 x (3 + 9) = 48 measurements with one outcome
+        # Also removing the 'new window' is yes rows which seems to be a summary row
+        
+        tidyTrainingData<-subset(totalData, totalData$new_window=='no', 
+                        select=c(roll_belt, pitch_belt, yaw_belt,
+                        gyros_belt_x, gyros_belt_y, gyros_belt_z,
+                        accel_belt_x, accel_belt_y, accel_belt_z,
+                        magnet_belt_x, magnet_belt_y, magnet_belt_z,
+                        roll_arm, pitch_arm, yaw_arm,
+                        gyros_arm_x, gyros_arm_y, gyros_arm_z,
+                        accel_arm_x, accel_arm_y, accel_arm_z,
+                        magnet_arm_x, magnet_arm_y, magnet_arm_z,
+                        roll_dumbbell, pitch_dumbbell, yaw_dumbbell,
+                        gyros_dumbbell_x, gyros_dumbbell_y, gyros_dumbbell_z,
+                        accel_dumbbell_x, accel_dumbbell_y, accel_dumbbell_z,
+                        magnet_dumbbell_x, magnet_dumbbell_y, magnet_dumbbell_z,
+                        roll_forearm, pitch_forearm, yaw_forearm,
+                        gyros_forearm_x, gyros_forearm_y, gyros_forearm_z,
+                        accel_forearm_x, accel_arm_y, accel_arm_z,
+                        magnet_forearm_x, magnet_forearm_y, magnet_forearm_z,
+                        classe
+                        ))
+```
+
+##Modelling the data:
+
+Next I am going to try to model the data. First I am separating my training set into training and test with 60% - 40% split. This is to use the second part of the training set as my test set. This division supports the cross validation I want to do on my model before I use the official test set. This will prevent any overfitting of the data.
+
+I also set the seed so I can repeat my results.
+
+
+```{r echo=TRUE, cache=TRUE, warning=FALSE}
+        
+        set.seed(1234)
+        #Splitting for cross validation, splitting 60/40
+        inTrain <- createDataPartition(y=tidyTrainingData$classe,
+                                       p=0.6, list=FALSE)
+        training <- tidyTrainingData[inTrain,]
+        testing  <- tidyTrainingData[-inTrain,]
+        
+```
+
+###Model # 1: Stochastic Gradient Boosting Model (GBM). 
+
+This is used for classification and regression using packages gbm and plyr with tuning parameters:
+
+  1. Number of Boosting Iterations (n.trees, numeric)
+  2. Max Tree Depth (interaction.depth, numeric)
+  3. Shrinkage (shrinkage, numeric)
+  
+I am using the train control function from caret package to create a cross validation with 5 folds. Also I am using the train function from caret package to execute this model.
+
+Shrinkage is fixed at 0.1 generally. The number of trees and Max depth is tuned after the model is evaluated. Train function in caret does the tuning and also picks the model with max tree depth and number of trees that gives the best accuracy. 
+
+####Model # 1: Accuracy/Out of sample error rate on training set.
+My model gave 150 trees with 3 depth (Shrinkage was 0.1 a fixed quantity). For this model accuracy is around 96%. Sample error rate can be construed as 1-accuracy which is approximately 4%.
+
+
+```{r echo=TRUE, cache=TRUE, warning=FALSE}       
+        set.seed(12341)
+        fitControl<-trainControl(method="cv",
+                                 number=5)
+        gbm1<-train(classe ~ ., data=training, 
+                      method="gbm",
+                      trControl=fitControl,
+                      verbose=FALSE)
+        print(gbm1)
+
+        
+```
+
+###Model # 1: Cross-Validation on my test set
+I am using the model I built for predicting on the testing set that I set aside. This was the remaining 40% of the data. The accuracy on this set is also 96% which is very good.
+
+```{r echo=TRUE, cache=TRUE, warning=FALSE}
+        set.seed(12342)
+        testingClasse<-testing$classe
+        testingGBM<-testing[,-49]  # removing the classe variable before prediciton
+        gbm2<-predict(gbm1, testingGBM)
+        print(confusionMatrix(gbm2, testingClasse))
+        
+```
+
+###Model # 2 - Random Forest. 
+
+For the second model, I am using the random forest model. 
+This model is used for classification and regression using package randomForest with tuning parameters:
+
+  1. Number of Randomly Selected Predictors (mtry, numeric)
+  
+I have not used the train method from caret and directly used the random forest from the randomForest package. This definitely performs lot faster than train. The confusion matrix and the error rate is printed from the training data which gives the out of sample error. 
+
+####Model # 2: Accuracy/Out of sample error rate on training set.
+For this model accuracy is around 99%. Out of Bag (OBB) error is estimated to be less than 1% (out of sample error rate).
+
+```{r echo=TRUE, cache=TRUE, warning=FALSE}
+
+        set.seed(12343)
+        train.rf <- randomForest(classe ~., data=training, 
+                                 importance=TRUE)
+        print(train.rf)
+        
+```
+
+####Model # 2: Cross-Validation on my test set
+I am using the model I build and predicting on the testing set that I set aside. This model is still showing very high pediction percentages (diagonal elements) in the table displayed below (least accuracy of 98% for B and highest of 100% for E).
+
+```{r echo=TRUE, cache=TRUE, warning=FALSE}
+
+        set.seed(12344)
+        testingClasse<-testing$classe
+        testingRF<-testing[,-49]  # removing the classe variable before prediciton
+        predict.rf<-predict(train.rf, newdata=testingRF, type="response")
+        t<-table(predict.rf, testing$classe)
+        print(margin.table(t,1))
+        print(prop.table(t,1))
+        
+```
+
+###Conclusion
+
+Definitely both models had pretty good predictions and also accuracy percentages. Both models performed well on the cross validated test data. However Random Forest was a clear winner with 98%+ accuracy in predictions.
+
+###Solving the test file
+Finally I am going to solve the test file with random forest method. Below are the answers I have gotten as predictions for the test file.
+
+
+```{r echo=FALSE, cache=TRUE, warning=FALSE}
+
+        set.seed(12345)
+
+        #Reading the file
+        testData<-read.csv("data/pml-testing.csv")
+
+        tidyTestData<-subset(testData, testData$new_window=='no', 
+                        select=c(roll_belt, pitch_belt, yaw_belt,
+                        gyros_belt_x, gyros_belt_y, gyros_belt_z,
+                        accel_belt_x, accel_belt_y, accel_belt_z,
+                        magnet_belt_x, magnet_belt_y, magnet_belt_z,
+                        roll_arm, pitch_arm, yaw_arm,
+                        gyros_arm_x, gyros_arm_y, gyros_arm_z,
+                        accel_arm_x, accel_arm_y, accel_arm_z,
+                        magnet_arm_x, magnet_arm_y, magnet_arm_z,
+                        roll_dumbbell, pitch_dumbbell, yaw_dumbbell,
+                        gyros_dumbbell_x, gyros_dumbbell_y, gyros_dumbbell_z,
+                        accel_dumbbell_x, accel_dumbbell_y, accel_dumbbell_z,
+                        magnet_dumbbell_x, magnet_dumbbell_y, magnet_dumbbell_z,
+                        roll_forearm, pitch_forearm, yaw_forearm,
+                        gyros_forearm_x, gyros_forearm_y, gyros_forearm_z,
+                        accel_forearm_x, accel_arm_y, accel_arm_z,
+                        magnet_forearm_x, magnet_forearm_y, magnet_forearm_z
+                        ))
+        predictTest.rf<-predict(train.rf, newdata=tidyTestData, type="response")
+        print(predictTest.rf)
+        
+```
